@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>AlexZero Connect Four</title>
+<style>
+  :root {
+    --board: #1b56d6; --hole: #0e1726; --red: #e23b4e; --yellow: #f4c542;
+    --bg: #0b1020; --panel: #161d31; --text: #e8edf6; --muted: #93a0bd;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; min-height: 100dvh; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    padding: max(16px, env(safe-area-inset-top)) 14px
+             max(16px, env(safe-area-inset-bottom)) 14px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .back { align-self: flex-start; color: var(--muted); font-size: .85rem; text-decoration: none; }
+  .back:hover { color: var(--text); }
+  h1 { font-size: clamp(1.2rem, 5vw, 1.5rem); margin: 0; font-weight: 650; text-align: center; }
+  h1 span { color: var(--red); }
+  .status {
+    min-height: 26px; font-size: clamp(.95rem, 4vw, 1.1rem);
+    font-weight: 600; text-align: center;
+  }
+  .status .think { color: var(--yellow); }
+  .eval { color: var(--muted); font-size: .8rem; font-weight: 500; text-align: center; }
+
+  /* Board sizes itself to the screen; cells stay square via aspect-ratio. */
+  .board {
+    width: min(94vw, 460px);
+    background: var(--board); padding: 12px; border-radius: 14px;
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 9px;
+    box-shadow: 0 14px 40px rgba(0,0,0,.45); touch-action: manipulation;
+  }
+  .cell {
+    aspect-ratio: 1 / 1; border-radius: 50%; background: var(--hole);
+    box-shadow: inset 0 3px 6px rgba(0,0,0,.55); position: relative;
+  }
+  .board.clickable .cell { cursor: pointer; }
+  @media (hover: hover) {
+    .board.clickable .cell.colhover { background: #1b2740; }
+  }
+  .disc {
+    position: absolute; inset: 0; border-radius: 50%;
+    animation: drop .28s cubic-bezier(.34,1.2,.64,1);
+  }
+  .disc.X { background: radial-gradient(circle at 35% 30%, #ff6b7c, var(--red)); }
+  .disc.O { background: radial-gradient(circle at 35% 30%, #ffe08a, var(--yellow)); }
+  .cell.win .disc { box-shadow: 0 0 0 3px #fff, 0 0 16px 4px #fff; }
+  @keyframes drop { from { transform: translateY(-340px); } to { transform: none; } }
+
+  .legend { display: flex; gap: 16px; font-size: .82rem; color: var(--muted);
+    flex-wrap: wrap; justify-content: center; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle; }
+  .legend .r { background: var(--red); } .legend .y { background: var(--yellow); }
+
+  .controls {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    justify-content: center; background: var(--panel);
+    padding: 12px 14px; border-radius: 12px; width: min(94vw, 460px);
+  }
+  .controls .field { display: flex; align-items: center; gap: 6px; }
+  .controls label { font-size: .8rem; color: var(--muted); }
+  select, button {
+    font: inherit; font-size: .95rem; background: #222c46; color: var(--text);
+    border: 1px solid #344063; border-radius: 8px; padding: 10px 14px;
+    min-height: 44px; cursor: pointer;   /* 44px = comfortable touch target */
+  }
+  button.primary { background: var(--red); border-color: var(--red); font-weight: 600; }
+  button:hover { filter: brightness(1.1); }
+  button:active { transform: translateY(1px); }
+  @media (max-width: 420px) {
+    .controls { flex-direction: column; align-items: stretch; }
+    .controls .field { justify-content: space-between; }
+    select, button { width: 100%; }
+  }
+</style>
+</head>
+<body>
+  <a class="back" href="/">← Alex's Lab</a>
+  <h1>AlexZero <span>Connect Four</span></h1>
+  <div class="status" id="status">Your move — tap a column.</div>
+
+  <div class="board locked" id="board"><!-- cells injected by JS --></div>
+
+  <div class="legend">
+    <span><i class="r"></i><span id="redname">You</span></span>
+    <span><i class="y"></i><span id="yellowname">AlexZero</span></span>
+    <span class="eval" id="eval"></span>
+  </div>
+
+  <div class="controls">
+    <div class="field"><label>You play</label>
+      <select id="side">
+        <option value="X">Red (first)</option>
+        <option value="O">Yellow (second)</option>
+      </select>
+    </div>
+    <div class="field"><label>Difficulty</label>
+      <select id="sims">
+        <option value="100">Easy</option>
+        <option value="300" selected>Medium</option>
+        <option value="700">Hard</option>
+      </select>
+    </div>
+    <button class="primary" id="newgame">New game</button>
+  </div>
+
+<script>
+const ROWS = 6, COLS = 7;
+const boardEl = document.getElementById("board");
+const statusEl = document.getElementById("status");
+const evalEl = document.getElementById("eval");
+const hoverable = window.matchMedia("(hover: hover)").matches;
+
+let moves = [];      // columns played so far (0-indexed)
+let busy = false;    // waiting on the AI
+let gameOver = false;
+
+// Build the 42 holes. The whole cell is the tap target (good for touch);
+// clicking any cell drops into that column.
+const cells = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const cell = document.createElement("div");
+    cell.className = "cell"; cell.dataset.r = r; cell.dataset.c = c;
+    cell.addEventListener("click", () => onColumn(c));
+    if (hoverable) cell.addEventListener("pointerenter", () => {
+      if (!busy && !gameOver) setColHover(c);
+    });
+    boardEl.appendChild(cell);
+    cells.push(cell);
+  }
+}
+boardEl.addEventListener("pointerleave", () => setColHover(-1));
+
+function cellAt(r, c) { return cells[r * COLS + c]; }
+function setColHover(c) {
+  cells.forEach(cell => cell.classList.toggle("colhover", Number(cell.dataset.c) === c));
+}
+
+function render(state) {
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const cell = cellAt(r, c);
+    const v = state.board[r][c];
+    cell.classList.remove("win");
+    if (v && !cell.firstChild) {
+      const d = document.createElement("div");
+      d.className = "disc " + v; cell.appendChild(d);
+    } else if (!v && cell.firstChild) {
+      cell.removeChild(cell.firstChild);
+    }
+  }
+  if (state.win_cells) state.win_cells.forEach(([r, c]) => cellAt(r, c).classList.add("win"));
+  evalEl.textContent = (state.eval !== null && state.eval !== undefined)
+    ? `AlexZero eval: ${state.eval > 0 ? "+" : ""}${state.eval} (its view)` : "";
+}
+
+function setStatus(state) {
+  const human = document.getElementById("side").value;
+  if (state.status === "draw") { statusEl.textContent = "Draw."; gameOver = true; }
+  else if (state.status) {
+    const youWon = state.status === human;
+    statusEl.innerHTML = youWon ? "🎉 You win!" : "AlexZero wins.";
+    gameOver = true;
+  } else {
+    statusEl.textContent = "Your move — tap a column.";
+  }
+  boardEl.classList.toggle("clickable", !gameOver && !busy);
+  boardEl.classList.toggle("locked", gameOver || busy);
+}
+
+async function post() {
+  busy = true;
+  setColHover(-1);
+  boardEl.classList.remove("clickable"); boardEl.classList.add("locked");
+  statusEl.innerHTML = '<span class="think">AlexZero is thinking…</span>';
+  const human = document.getElementById("side").value;
+  const sims = document.getElementById("sims").value;
+  const game = gameId;
+  const state = await think({ moves, human, sims: Number(sims) });
+  if (game !== gameId) return;   // a new game started while the AI was thinking
+  busy = false;
+  if (state.error) { statusEl.textContent = "Error: " + state.error; return; }
+  moves = state.moves;
+  render(state);
+  setStatus(state);
+}
+
+// The AI runs in a Web Worker (engine.js: the trained net + MCTS, in-browser).
+const worker = new Worker("worker.js");
+const pending = new Map();
+let gameId = 0, reqId = 0;
+worker.onmessage = e => { pending.get(e.data.id)?.(e.data.state); pending.delete(e.data.id); };
+worker.onerror = e => { pending.forEach(r => r({ error: e.message || "AI failed to load" })); pending.clear(); };
+function think(req) {
+  return new Promise(resolve => {
+    const id = ++reqId;
+    pending.set(id, resolve);
+    worker.postMessage({ id, ...req });
+  });
+}
+
+function columnFull(c) {
+  return moves.filter(m => m === c).length >= ROWS;
+}
+
+function onColumn(c) {
+  if (busy || gameOver || columnFull(c)) return;
+  const human = document.getElementById("side").value;
+  // Render the human's disc IMMEDIATELY so it's visible before the AI thinks.
+  const fill = moves.filter(m => m === c).length;   // pieces already in column c
+  const row = ROWS - 1 - fill;                       // landing row (gravity)
+  const d = document.createElement("div");
+  d.className = "disc " + human;
+  cellAt(row, c).appendChild(d);
+  moves.push(c);
+  post();   // sets "thinking…" and fetches the AI reply; render() keeps our disc
+}
+
+function newGame() {
+  gameId++;
+  moves = []; busy = false; gameOver = false;
+  setColHover(-1);
+  cells.forEach(cell => { cell.classList.remove("win"); if (cell.firstChild) cell.removeChild(cell.firstChild); });
+  evalEl.textContent = "";
+  const human = document.getElementById("side").value;
+  document.getElementById("redname").textContent = human === "X" ? "You" : "AlexZero";
+  document.getElementById("yellowname").textContent = human === "X" ? "AlexZero" : "You";
+  if (human === "O") {
+    post();   // AI (Red/X) opens
+  } else {
+    statusEl.textContent = "Your move — tap a column.";
+    boardEl.classList.add("clickable"); boardEl.classList.remove("locked");
+  }
+}
+
+document.getElementById("newgame").addEventListener("click", newGame);
+document.getElementById("side").addEventListener("change", newGame);
+newGame();
+</script>
+</body>
+</html>
