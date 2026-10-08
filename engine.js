@@ -49,11 +49,10 @@ function result(b) {
 }
 
 // ---------------------------------------------------------------- network
-// Activations are kept in zero-padded 8x9 planes so 3x3 convs need no bounds
-// checks. A conv accumulates over a flat 52-long window (rows of 9, two junk
-// columns per row that are discarded), which keeps the inner loop long.
+// Activations are kept in zero-padded (ROWS+2)x(COLS+2) planes so 3x3 convs
+// need no bounds checks.
 
-const PH = ROWS + 2, PW = COLS + 2, P = PH * PW, SPAN = (ROWS - 1) * PW + COLS;
+const PH = ROWS + 2, PW = COLS + 2, P = PH * PW;
 
 class Net {
   constructor(manifest, buf) {
